@@ -5,115 +5,96 @@ import { GameState, Lane, ObstacleData } from '../types';
 import * as THREE from 'three';
 import { getTrackHeight, getCurveOffset } from './World';
 
+// --- CONSTANTS ---
 const LANE_WIDTH = 3;
 const SPAWN_Z = -100;
 const DESPAWN_Z = 5;
 const VISIBLE_LIMIT_Z = 5; 
-const COLLISION_THRESHOLD = 1.5;
+const COLLISION_THRESHOLD_Z_NEAR = -1.5;
+const COLLISION_THRESHOLD_Z_FAR = 1.5;
 
-// --- Visual Components ---
+// --- ASSETS (Geometries/Materials) ---
+// Pre-allocating these outside the component to prevent recreation
+const obstacleGeo = new THREE.ConeGeometry(1.2, 2.5, 4);
+const obstacleEdges = new THREE.EdgesGeometry(obstacleGeo);
+const obstacleMatBody = new THREE.MeshStandardMaterial({ color: "#220000", roughness: 0.1, metalness: 0.8 });
+const obstacleMatLine = new THREE.LineBasicMaterial({ color: "#ff0000", toneMapped: false, linewidth: 2 });
 
-const ObstacleMesh: React.FC = () => {
-    const geometry = useMemo(() => new THREE.ConeGeometry(1.2, 2.5, 4), []);
-    const edges = useMemo(() => new THREE.EdgesGeometry(geometry), [geometry]);
-    return (
-        <group position={[0, 1.25, 0]}>
-            <mesh geometry={geometry}>
-                <meshStandardMaterial color="#220000" roughness={0.1} metalness={0.8} />
-            </mesh>
-            <lineSegments geometry={edges}>
-                <lineBasicMaterial color="#ff0000" toneMapped={false} linewidth={2} />
-            </lineSegments>
-            <pointLight color="red" intensity={3} distance={4} />
+const bonusGeo = new THREE.IcosahedronGeometry(0.8, 1);
+const bonusRingGeo = new THREE.TorusGeometry(1.2, 0.05, 16, 32);
+const bonusMat = new THREE.MeshStandardMaterial({ color: "#00f3ff", emissive: "#00f3ff", emissiveIntensity: 3, toneMapped: false });
+const bonusRingMat = new THREE.MeshBasicMaterial({ color: "#ffffff" });
+
+const laserGeoCore = new THREE.CylinderGeometry(0.1, 0.1, 12, 8);
+const laserGeoGlow = new THREE.CylinderGeometry(0.3, 0.3, 12, 8);
+const laserMatCore = new THREE.MeshBasicMaterial({ color: "#ff0000", toneMapped: false });
+const laserMatGlow = new THREE.MeshBasicMaterial({ color: "#ff0000", transparent: true, opacity: 0.3, toneMapped: false });
+
+// --- RENDER COMPONENTS ---
+
+const ObstacleMesh: React.FC = React.memo(() => (
+    <group position={[0, 1.25, 0]}>
+        <mesh geometry={obstacleGeo} material={obstacleMatBody} />
+        <lineSegments geometry={obstacleEdges} material={obstacleMatLine} />
+        <pointLight color="red" intensity={3} distance={4} />
+    </group>
+));
+
+const BonusMesh: React.FC = React.memo(() => (
+    <group position={[0, 1.5, 0]}>
+        <mesh geometry={bonusGeo} material={bonusMat} />
+        <mesh geometry={bonusRingGeo} material={bonusRingMat} rotation={[Math.PI/2, 0, 0]} />
+        <pointLight color="#00f3ff" intensity={2} distance={5} />
+    </group>
+));
+
+const LaserMesh: React.FC = React.memo(() => (
+    <group position={[0, 0.2, 0]}>
+        <group rotation={[0, 0, Math.PI / 2]}>
+            <mesh geometry={laserGeoCore} material={laserMatCore} />
+            <mesh geometry={laserGeoGlow} material={laserMatGlow} />
         </group>
-    );
-};
+        <pointLight color="#ff0000" intensity={5} distance={10} />
+    </group>
+));
 
-const LaserMesh: React.FC = () => {
-    return (
-        <group position={[0, 0.2, 0]}>
-            <mesh rotation={[0, 0, Math.PI / 2]}>
-                <cylinderGeometry args={[0.1, 0.1, 12, 8]} />
-                <meshBasicMaterial color="#ff0000" toneMapped={false} />
-            </mesh>
-            <mesh rotation={[0, 0, Math.PI / 2]}>
-                 <cylinderGeometry args={[0.3, 0.3, 12, 8]} />
-                 <meshBasicMaterial color="#ff0000" transparent opacity={0.3} toneMapped={false} />
-            </mesh>
-            <pointLight color="#ff0000" intensity={5} distance={10} />
-        </group>
-    );
-};
-
-const BonusMesh: React.FC = () => {
-    return (
-        <group position={[0, 1.5, 0]}>
-            <mesh>
-                <icosahedronGeometry args={[0.8, 1]} />
-                <meshStandardMaterial 
-                    color="#00f3ff" 
-                    emissive="#00f3ff" 
-                    emissiveIntensity={3} 
-                    toneMapped={false} 
-                />
-            </mesh>
-            <mesh rotation={[Math.PI/2, 0, 0]}>
-                <torusGeometry args={[1.2, 0.05, 16, 32]} />
-                <meshBasicMaterial color="#ffffff" />
-            </mesh>
-             <pointLight color="#00f3ff" intensity={2} distance={5} />
-        </group>
-    );
-};
-
-// --- Manager ---
+// --- LOGIC COMPONENT ---
 
 const MovingObject: React.FC<{ data: ObstacleData, distanceRef: React.MutableRefObject<number> }> = ({ data, distanceRef }) => {
     const group = useRef<THREE.Group>(null);
 
     useFrame((state) => {
-        if (group.current) {
-            // 1. Z Position (World Space)
-            // Obstacles physically move towards camera, so their Z changes.
-            group.current.position.z = data.z;
+        if (!group.current) return;
 
-            // 2. Y Position (Undulation)
-            // To sit ON the hill, we need the "Virtual Map Z".
-            // Virtual Z = Current World Z - Total Distance Traveled
-            // Note: Since distanceRef is negative (moving forward), we usually do:
-            // playerVirtualZ = 0 - distanceRef.
-            // obstacleVirtualZ = data.z - distanceRef.
-            const virtualZ = data.z - distanceRef.current;
-            const y = getTrackHeight(virtualZ);
-            
-            const heightOffset = data.type === 'laser' ? 0.0 : 0; 
-            group.current.position.y = y + heightOffset;
+        // 1. Position Calculation
+        // Virtual Z calculates where we are relative to the "scrolling" terrain for Y-height
+        const virtualZ = data.z - distanceRef.current;
+        const trackHeight = getTrackHeight(virtualZ);
+        
+        // World Space Mapping
+        group.current.position.z = data.z;
+        group.current.position.y = trackHeight + (data.type === 'laser' ? 0.0 : 0);
+        
+        // Curve Application
+        const laneX = data.lane * LANE_WIDTH;
+        const curveOffset = getCurveOffset(data.z, state.clock.elapsedTime);
+        group.current.position.x = laneX + curveOffset;
 
-            // 3. X Position (Curve)
-            // To align with road, we use World Z for the curve calculation
-            const laneX = data.lane * LANE_WIDTH;
-            const curveOffset = getCurveOffset(data.z, state.clock.elapsedTime);
-            
-            group.current.position.x = laneX + curveOffset;
+        // 2. Rotation & Orientation
+        // Calculate tangent to the curve for correct facing
+        const curveStrength = Math.sin(state.clock.elapsedTime * 0.05) * 0.0002;
+        const tangent = 2 * data.z * curveStrength;
+        
+        group.current.rotation.y = -tangent;
 
-            // 4. Rotation
-            // Tangent calculation to face the curve
-            // MUST MATCH WORLD CURVE LOGIC (time * 0.05, strength 0.0002)
-            const curveStrength = Math.sin(state.clock.elapsedTime * 0.05) * 0.0002;
-            // Derivative of x = z^2 * C is dx/dz = 2 * z * C
-            const tangent = 2 * data.z * curveStrength;
-            
-            // Basic rotation facing
-            group.current.rotation.y = -tangent; 
-            
-            // Add extra rotation for bonus
-            if (data.type === 'bonus') {
-                group.current.rotation.y += 0.05; 
-                group.current.rotation.z = Math.sin(data.z * 0.2) * 0.2;
-            }
-
-            group.current.visible = data.z <= VISIBLE_LIMIT_Z;
+        // Bonus animation
+        if (data.type === 'bonus') {
+            group.current.rotation.y += state.clock.elapsedTime; 
+            group.current.rotation.z = Math.sin(data.z * 0.2) * 0.2;
         }
+
+        // 3. Culling
+        group.current.visible = data.z <= VISIBLE_LIMIT_Z && data.z >= SPAWN_Z;
     });
 
     return (
@@ -125,16 +106,20 @@ const MovingObject: React.FC<{ data: ObstacleData, distanceRef: React.MutableRef
     );
 };
 
+// --- SYSTEM MANAGER ---
+
 export const ObstacleManager: React.FC = () => {
-  const { gameState, actions, speed, gameSpeedMultiplier, isJumping } = useGameStore();
+  const { gameState, actions, speed, gameSpeedMultiplier } = useGameStore();
   
+  // ECS Data
   const obstaclesRef = useRef<ObstacleData[]>([]);
   const lastSpawnTime = useRef(0);
+  const distanceRef = useRef(0);
+  
+  // Render container
   const groupRef = useRef<THREE.Group>(null);
   
-  // Track total distance purely for visual sync of undulation (Y-axis)
-  const distanceRef = useRef(0);
-
+  // Reset logic
   useEffect(() => {
     if (gameState === GameState.PLAYING) {
       obstaclesRef.current = [];
@@ -145,86 +130,90 @@ export const ObstacleManager: React.FC = () => {
 
   useFrame((state, delta) => {
     if (gameState !== GameState.PLAYING) return;
-    if (!groupRef.current) return;
-
-    const currentSpeed = speed * gameSpeedMultiplier;
     
-    // Update distance tracker (syncs with World and Player)
+    const currentSpeed = speed * gameSpeedMultiplier;
     distanceRef.current -= currentSpeed * delta;
 
-    // 1. Move Obstacles
+    // --- SYSTEM 1: MOVEMENT ---
     obstaclesRef.current.forEach(obs => {
       obs.z += currentSpeed * delta;
     });
 
-    // 2. Spawn
+    // --- SYSTEM 2: SPAWNER ---
     const spawnInterval = Math.max(0.3, 1.0 / gameSpeedMultiplier);
-    
     if (state.clock.elapsedTime - lastSpawnTime.current > spawnInterval) {
       const lanes = [Lane.LEFT, Lane.CENTER, Lane.RIGHT];
       const shuffledLanes = lanes.sort(() => 0.5 - Math.random());
-      
       const rand = Math.random();
       
+      const newObstacles: ObstacleData[] = [];
+
+      // 15% Chance for Laser (Tripwire)
       if (rand < 0.15) {
-          obstaclesRef.current.push({
-            id: Math.random().toString(36).substr(2, 9),
+          newObstacles.push({
+            id: crypto.randomUUID(),
             lane: Lane.CENTER,
             z: SPAWN_Z,
             type: 'laser'
           });
       } else {
+          // Standard Obstacles / Bonus
           const isBonus = rand < 0.3;
-          const lanesToFill = (isBonus || Math.random() > 0.6) ? 1 : 2;
+          const count = (isBonus || Math.random() > 0.6) ? 1 : 2; // 1 or 2 items
 
-          for(let i=0; i<lanesToFill; i++) {
+          for(let i=0; i<count; i++) {
+            // Prevent blocking all lanes if mixing bonus + obstacle
             if (i === 1 && isBonus) continue; 
-            obstaclesRef.current.push({
-              id: Math.random().toString(36).substr(2, 9),
+            
+            newObstacles.push({
+              id: crypto.randomUUID(),
               lane: shuffledLanes[i],
               z: SPAWN_Z,
-              type: isBonus && i === 0 ? 'bonus' : 'obstacle'
+              type: (isBonus && i === 0) ? 'bonus' : 'obstacle'
             });
           }
       }
-      
+      obstaclesRef.current.push(...newObstacles);
       lastSpawnTime.current = state.clock.elapsedTime;
     }
 
-    // 3. Cleanup & Difficulty
-    const initialCount = obstaclesRef.current.length;
+    // --- SYSTEM 3: CLEANUP ---
+    const beforeCount = obstaclesRef.current.length;
     obstaclesRef.current = obstaclesRef.current.filter(obs => obs.z < DESPAWN_Z);
-    const despawned = initialCount - obstaclesRef.current.length;
-    
-    if (despawned > 0) {
-        actions.increaseSpeed(0.02 * despawned);
+    const despawnedCount = beforeCount - obstaclesRef.current.length;
+    if (despawnedCount > 0) {
+        actions.increaseSpeed(0.02 * despawnedCount);
     }
 
-    // 4. Collision
-    const playerLane = useGameStore.getState().currentLane;
-    const jumpingNow = useGameStore.getState().isJumping;
+    // --- SYSTEM 4: COLLISION DETECTION ---
+    const playerStore = useGameStore.getState();
+    const pLane = playerStore.currentLane;
+    const pJumping = playerStore.isJumping;
 
     for (let i = obstaclesRef.current.length - 1; i >= 0; i--) {
         const obs = obstaclesRef.current[i];
         
-        if (obs.z > -1.5 && obs.z < COLLISION_THRESHOLD) {
+        // AABB-ish Z-Check
+        if (obs.z > COLLISION_THRESHOLD_Z_NEAR && obs.z < COLLISION_THRESHOLD_Z_FAR) {
             
+            // Lane Check
             if (obs.type === 'laser') {
-                if (!jumpingNow) {
-                     actions.endGame();
-                     break;
+                // Lasers span all lanes, must jump
+                if (!pJumping) {
+                    actions.endGame();
+                    break;
                 }
-            } else if (obs.lane === playerLane) {
+            } else if (obs.lane === pLane) {
+                // Same lane interaction
                 if (obs.type === 'bonus') {
-                    actions.setScore(useGameStore.getState().score + 500);
-                    obstaclesRef.current.splice(i, 1);
-                    continue;
+                    actions.setScore(playerStore.score + 500);
+                    obstaclesRef.current.splice(i, 1); // Remove bonus immediately
                 } else if (obs.type === 'obstacle') {
-                    if (jumpingNow) {
-                        // Dodged
-                    } else {
+                    if (!pJumping) {
                         actions.endGame();
                         break;
+                    } else {
+                        // Jumped over it - Success (Add slight score maybe?)
                     }
                 }
             }
@@ -235,11 +224,7 @@ export const ObstacleManager: React.FC = () => {
   return (
     <group ref={groupRef}>
       {obstaclesRef.current.map((obs) => (
-        <MovingObject 
-            key={obs.id} 
-            data={obs} 
-            distanceRef={distanceRef} 
-        />
+        <MovingObject key={obs.id} data={obs} distanceRef={distanceRef} />
       ))}
     </group>
   );

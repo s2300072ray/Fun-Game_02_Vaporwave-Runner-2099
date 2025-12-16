@@ -1,4 +1,4 @@
-import React, { Suspense, useRef } from 'react';
+import React, { Suspense } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Environment } from '@react-three/drei';
 import { World } from './components/World';
@@ -6,68 +6,73 @@ import { Player } from './components/Player';
 import { ObstacleManager } from './components/ObstacleManager';
 import { PostProcessing } from './components/PostProcessing';
 import { UI } from './components/UI';
-import { useGameStore } from './store';
 import * as THREE from 'three';
 
 const CameraController: React.FC = () => {
     useFrame((state) => {
         const time = state.clock.elapsedTime;
         
-        // Match the frequency from World.tsx (0.05)
-        // World: Sun moves +X (Right) when sine is positive
+        // 1. Calculate World Curve Influence
+        // Must match the frequency in World.tsx (0.05)
         const curvePhase = Math.sin(time * 0.05);
 
-        // Logic: If Sun moves Right (Turn Right), Camera moves Left (Counter-steer perspective)
-        // This enhances the feeling of the turn.
-        // REDUCED AMPLITUDE: 8 -> 3
-        const targetX = -curvePhase * 3; // Move camera horizontally opposite to the vanishing point
+        // 2. Camera Horizontal Sway
+        // Counter-steer: If world curves right (Sun goes right), Camera moves left slightly
+        // to keep the player framed nicely against the curve.
+        const targetX = -curvePhase * 3.0; 
 
-        // Smoothly interpolate camera position
+        // 3. Smooth Damping (Cinematic Feel)
         state.camera.position.x = THREE.MathUtils.lerp(state.camera.position.x, targetX, 0.05);
         
-        // Maintain base height and distance, but allow slight sway
-        // Base: [0, 3, 6]
-        state.camera.position.y = THREE.MathUtils.lerp(state.camera.position.y, 3 + Math.abs(curvePhase) * 0.5, 0.05); // Slight rise in turns
+        // 4. Vertical Bob & Distance
+        // Slight rise during turns to see more track
+        const targetY = 3 + Math.abs(curvePhase) * 0.5;
+        state.camera.position.y = THREE.MathUtils.lerp(state.camera.position.y, targetY, 0.05);
         state.camera.position.z = 6;
 
-        // Dynamic LookAt: Always look slightly down the track, but compensate for the camera's offset
-        // If camera is Left (-X), we look slightly Right (+X) to keep the player centered visually
-        const lookAtX = curvePhase * 1.0; 
-        state.camera.lookAt(lookAtX, 2, -10);
+        // 5. LookAt Logic
+        // Look slightly ahead into the turn
+        const lookAtX = curvePhase * 1.5; 
+        state.camera.lookAt(lookAtX, 2, -15);
     });
     return null;
 };
 
 const GameScene: React.FC = () => {
-    // Camera is now controlled by CameraController
     return (
         <>
             <CameraController />
+            
+            {/* Lighting: Cyberpunk Theme (Dark with Neon highlights) */}
             <ambientLight intensity={0.2} />
-            {/* The sun/moon light from behind the vanishing point */}
             <pointLight position={[0, 5, -40]} intensity={10} color="#bc13fe" distance={100} />
             
+            {/* Core Game Systems */}
             <World />
             <Player />
             <ObstacleManager />
-            <PostProcessing />
             
-            <Environment preset="city" />
+            {/* VFX */}
+            <PostProcessing />
+            <Environment preset="city" blur={0.8} />
         </>
     );
 };
 
 const App: React.FC = () => {
-    // Force re-render of canvas on game start is sometimes cleaner for cleanup, 
-    // but here we manage state internally.
     return (
         <div className="relative w-screen h-screen bg-black overflow-hidden">
             <UI />
             <Canvas
                 shadows
                 camera={{ position: [0, 3, 6], fov: 75 }}
-                dpr={[1, 2]} // Optimize pixel ratio
-                gl={{ antialias: false, stencil: false, depth: true }} // Let post-processing handle AA
+                dpr={[1, 2]} // Dynamic Pixel Ratio for performance
+                gl={{ 
+                    antialias: false, // Post-processing handles smoothing
+                    stencil: false, 
+                    depth: true,
+                    powerPreference: "high-performance" 
+                }}
             >
                 <color attach="background" args={['#050505']} />
                 <Suspense fallback={null}>
