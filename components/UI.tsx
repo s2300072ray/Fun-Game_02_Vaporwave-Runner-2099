@@ -2,11 +2,20 @@ import React, { useEffect, useState } from 'react';
 import { useGameStore } from '../store';
 import { GameState } from '../types';
 import { generateGameCommentary } from '../services/geminiService';
-import { playSynthSound } from '../utils/audio';
+import { playSynthSound, playClickSound, initMusic } from '../utils/audio';
 
 export const UI: React.FC = () => {
-  const { gameState, score, highScore, actions, lastRunCommentary } = useGameStore();
+  const { gameState, score, highScore, isMuted, actions, lastRunCommentary } = useGameStore();
   const [loadingCommentary, setLoadingCommentary] = useState(false);
+
+  // Global Click Sound Listener
+  useEffect(() => {
+    const handleClick = () => {
+        playClickSound();
+    };
+    window.addEventListener('mousedown', handleClick);
+    return () => window.removeEventListener('mousedown', handleClick);
+  }, []);
 
   // Keyboard controls
   useEffect(() => {
@@ -27,8 +36,9 @@ export const UI: React.FC = () => {
       } else if (gameState === GameState.MENU || gameState === GameState.GAME_OVER) {
           if (e.key === 'Enter' || e.key === ' ') {
             actions.startGame();
-            // Initialize Audio Context on user gesture
+            // Initialize Audio on user gesture
             playSynthSound('move'); 
+            initMusic();
           }
       }
     };
@@ -60,13 +70,33 @@ export const UI: React.FC = () => {
             {Math.floor(score).toString().padStart(6, '0')}
           </span>
         </div>
-        
-        {gameState === GameState.PLAYING && (
-            <div className="flex flex-col items-end">
-                <span className="text-neon-pink text-xs font-tech animate-pulse">SYSTEM LINKED</span>
-                <span className="text-neon-blue text-sm">A/D to Move | SPACE to Jump</span>
-            </div>
-        )}
+
+        {/* Mute Button & Info */}
+        <div className="flex flex-col items-end gap-2">
+            <button 
+                onClick={(e) => {
+                    // Prevent propagation so we don't trigger game actions if we add click controls later
+                    e.stopPropagation(); 
+                    actions.toggleMute();
+                    // If unmuting, ensure music starts
+                    if (isMuted) initMusic(); 
+                }}
+                className="pointer-events-auto p-2 border border-neon-blue/50 hover:bg-neon-blue/20 transition-colors rounded-sm"
+            >
+                {isMuted ? (
+                    <span className="text-red-500 font-bold text-xs tracking-widest">AUDIO OFF</span>
+                ) : (
+                    <span className="text-neon-blue font-bold text-xs tracking-widest animate-pulse">AUDIO ON</span>
+                )}
+            </button>
+
+            {gameState === GameState.PLAYING && (
+                <div className="flex flex-col items-end">
+                    <span className="text-neon-pink text-xs font-tech animate-pulse">SYSTEM LINKED</span>
+                    <span className="text-neon-blue text-sm">A/D to Move | SPACE to Jump</span>
+                </div>
+            )}
+        </div>
       </div>
 
       {/* Main Menu */}
@@ -131,7 +161,10 @@ export const UI: React.FC = () => {
           </div>
 
           <button 
-            onClick={() => actions.startGame()}
+            onClick={() => {
+                actions.startGame();
+                initMusic();
+            }}
             className="group relative px-12 py-4 bg-transparent border-2 border-neon-blue hover:bg-neon-blue/20 transition-all duration-300"
           >
             <div className="absolute inset-0 bg-neon-blue/10 scale-x-0 group-hover:scale-x-100 transition-transform origin-left duration-300"></div>
@@ -179,7 +212,10 @@ export const UI: React.FC = () => {
             </div>
 
             <button 
-                onClick={() => actions.startGame()}
+                onClick={() => {
+                    actions.startGame();
+                    initMusic();
+                }}
                 className="w-full py-3 bg-neon-blue hover:bg-white hover:text-black text-black font-bold tracking-wider transition-colors"
             >
                 REBOOT SYSTEM

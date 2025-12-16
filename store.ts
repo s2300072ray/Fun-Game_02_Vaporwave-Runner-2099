@@ -1,11 +1,13 @@
 import { create } from 'zustand';
 import { GameState, Lane, GameStore } from './types';
-import { playSynthSound } from './utils/audio';
+import { playSynthSound, setMusicMuted } from './utils/audio';
 
-const INITIAL_SPEED = 30; // Increased from 20 to 30
+// --- GAME CONFIGURATION ---
+const INITIAL_SPEED = 30;
 const INITIAL_LANE = Lane.CENTER;
 
 export const useGameStore = create<GameStore>((set, get) => ({
+  // State
   gameState: GameState.MENU,
   score: 0,
   highScore: 0,
@@ -14,6 +16,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
   gameSpeedMultiplier: 1,
   isJumping: false,
   lastRunCommentary: null,
+  isMuted: false,
+
+  // Actions
   actions: {
     startGame: () => set({ 
       gameState: GameState.PLAYING, 
@@ -24,6 +29,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       isJumping: false,
       lastRunCommentary: null
     }),
+    
     endGame: () => {
       const { score, highScore } = get();
       playSynthSound('gameover');
@@ -32,21 +38,34 @@ export const useGameStore = create<GameStore>((set, get) => ({
         highScore: Math.max(score, highScore)
       });
     },
+    
     moveLeft: () => set((state) => ({ 
       currentLane: Math.max(Lane.LEFT, state.currentLane - 1) 
     })),
+    
     moveRight: () => set((state) => ({ 
       currentLane: Math.min(Lane.RIGHT, state.currentLane + 1) 
     })),
+    
     jump: () => set((state) => {
         if (state.isJumping) return {};
         return { isJumping: true };
     }),
+    
     land: () => set({ isJumping: false }),
+    
     setScore: (score) => set({ score }),
+    
     increaseSpeed: (delta) => set((state) => ({ 
       gameSpeedMultiplier: state.gameSpeedMultiplier + delta 
     })),
+    
     setCommentary: (text) => set({ lastRunCommentary: text }),
+    
+    toggleMute: () => set((state) => {
+      const newMuted = !state.isMuted;
+      setMusicMuted(newMuted);
+      return { isMuted: newMuted };
+    }),
   }
 }));

@@ -28,6 +28,7 @@ export interface GameStore {
   gameSpeedMultiplier: number;
   isJumping: boolean; // New state for jump
   lastRunCommentary: string | null;
+  isMuted: boolean; // New state for audio
   actions: {
     startGame: () => void;
     endGame: () => void;
@@ -38,5 +39,6 @@ export interface GameStore {
     setScore: (score: number) => void;
     increaseSpeed: (delta: number) => void;
     setCommentary: (text: string) => void;
+    toggleMute: () => void; // Action to toggle audio
   };
 }
